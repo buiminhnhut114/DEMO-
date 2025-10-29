@@ -1,0 +1,419 @@
+`timescale 1ns/1ps
+`default_nettype none
+
+// =======================================================
+// Top Testbench with APB BFM + Dummy UART (for BUS tests)
+// =======================================================
+module tb_uart_apb_top;
+
+  // ---------------- Clocks & Resets ----------------
+  reg PCLK;
+  reg UARTCLK;
+
+  initial begin
+    PCLK = 1'b0;
+    forever #5 PCLK = ~PCLK;       // 100 MHz
+  end
+
+  initial begin
+    UARTCLK = 1'b0;
+    forever #7 UARTCLK = ~UARTCLK; // ~71.4 MHz (async)
+  end
+
+  // ---------------- APB signals ----------------
+  reg         PRESETn;
+  reg         PSEL, PENABLE, PWRITE;
+  reg  [11:2] PADDR;
+  reg  [15:0] PWDATA;
+  wire [15:0] PRDATA;
+
+  // ---------------- Other DUT inputs ----------------
+  reg nUARTRST;
+  reg nUARTCTS, nUARTDCD, nUARTDSR, nUARTRI;
+  reg UARTRXD, SIRIN;
+  reg SCANENABLE, SCANINPCLK, SCANINUCLK;
+  reg UARTTXDMACLR, UARTRXDMACLR;
+
+  // ---------------- DUT outputs ----------------
+  wire UARTMSINTR, UARTRXINTR, UARTTXINTR, UARTRTINTR, UARTEINTR, UARTINTR;
+  wire UARTTXD, nSIROUT, nUARTOut2, nUARTOut1, nUARTRTS, nUARTDTR;
+  wire SCANOUTPCLK, SCANOUTUCLK;
+  wire UARTTXDMASREQ, UARTTXDMABREQ, UARTRXDMASREQ, UARTRXDMABREQ;
+
+  // ---------------- APB BFM tasks ----------------
+  task apb_reset;
+  begin
+    PSEL    = 1'b0;
+    PENABLE = 1'b0;
+    PWRITE  = 1'b0;
+    PADDR   = {10{1'b0}};
+    PWDATA  = 16'h0000;
+  end
+  endtask
+
+  // word address is [11:2]
+  task apb_write;
+    input [11:2] addr_w;
+    input [15:0] wdata;
+  begin
+    @(posedge PCLK);
+    PSEL    <= 1'b1;
+    PENABLE <= 1'b0;   // SETUP
+    PWRITE  <= 1'b1;
+    PADDR   <= addr_w;
+    PWDATA  <= wdata;
+
+    @(posedge PCLK);
+    PENABLE <= 1'b1;   // ENABLE
+
+    @(posedge PCLK);   // finish
+    PSEL    <= 1'b0;
+    PENABLE <= 1'b0;
+    PWRITE  <= 1'b0;
+  end
+  endtask
+
+  task apb_read;
+    input  [11:2] addr_w;
+    output [15:0] rdata;
+  begin
+    @(posedge PCLK);
+    PSEL    <= 1'b1;
+    PENABLE <= 1'b0;   // SETUP
+    PWRITE  <= 1'b0;
+    PADDR   <= addr_w;
+
+    @(posedge PCLK);
+    PENABLE <= 1'b1;   // ENABLE
+
+    @(posedge PCLK);
+    rdata   = PRDATA;  // sample at end
+
+    PSEL    <= 1'b0;   // finish
+    PENABLE <= 1'b0;
+  end
+  endtask
+
+  // ---------------- Reset sequence ----------------
+  initial begin
+    PRESETn      = 1'b0;
+    nUARTRST     = 1'b0;
+
+    nUARTCTS = 1'b1; nUARTDCD = 1'b1; nUARTDSR = 1'b1; nUARTRI = 1'b1;
+    UARTRXD  = 1'b1; SIRIN    = 1'b1;
+
+    SCANENABLE=1'b0; SCANINPCLK=1'b0; SCANINUCLK=1'b0;
+    UARTTXDMACLR=1'b0; UARTRXDMACLR=1'b0;
+
+    apb_reset();
+    repeat (5) @(posedge PCLK);
+    PRESETn = 1'b1;
+    repeat (2) @(posedge UARTCLK);
+    nUARTRST = 1'b1;
+  end
+
+  // ---------------- DUT instantiation ----------------
+  // ===== Dummy version (dùng khi không có RTL thật) =====
+  uart_dummy dut (
+    .PCLK(PCLK), .UARTCLK(UARTCLK),
+    .PRESETn(PRESETn), .nUARTRST(nUARTRST),
+    .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
+    .PADDR(PADDR), .PWDATA(PWDATA), .PRDATA(PRDATA),
+    .nUARTCTS(nUARTCTS), .nUARTDCD(nUARTDCD), .nUARTDSR(nUARTDSR), .nUARTRI(nUARTRI),
+    .UARTRXD(UARTRXD), .SIRIN(SIRIN),
+    .SCANENABLE(SCANENABLE), .SCANINPCLK(SCANINPCLK), .SCANINUCLK(SCANINUCLK),
+    .UARTTXDMACLR(UARTTXDMACLR), .UARTRXDMACLR(UARTRXDMACLR),
+    .UARTMSINTR(UARTMSINTR), .UARTRXINTR(UARTRXINTR), .UARTTXINTR(UARTTXINTR),
+    .UARTRTINTR(UARTRTINTR), .UARTEINTR(UARTEINTR), .UARTINTR(UARTINTR),
+    .UARTTXD(UARTTXD), .nSIROUT(nSIROUT), .nUARTOut2(nUARTOut2), .nUARTOut1(nUARTOut1),
+    .nUARTRTS(nUARTRTS), .nUARTDTR(nUARTDTR),
+    .SCANOUTPCLK(SCANOUTPCLK), .SCANOUTUCLK(SCANOUTUCLK),
+    .UARTTXDMASREQ(UARTTXDMASREQ), .UARTTXDMABREQ(UARTTXDMABREQ),
+    .UARTRXDMASREQ(UARTRXDMASREQ), .UARTRXDMABREQ(UARTRXDMABREQ)
+  );
+
+  // ===== Khi dùng RTL thật: comment khối trên và thay bằng RTL của bạn =====
+  // your_uart_encrypted dut (/* map y như ảnh cổng */);
+
+  // ---------------- Run tests ----------------
+  initial begin
+    run_test();     // ĐƯỢC include từ run_test.v
+    $display("\n[TB] BUS tests finished.\n");
+    $finish;
+  end
+
+  `include "run_test.v"
+
+endmodule
+
+
+// =======================================================
+// Very small DUMMY UART (đủ để test BUS cơ bản)
+//  - ánh xạ 1 số register theo spec để Read/Write/Reset/Decode.
+//  - không mô phỏng truyền nhận thực, chỉ mô hình hóa trạng thái.
+// =======================================================
+module uart_dummy (
+  input  wire        PCLK, UARTCLK,
+  input  wire        PRESETn, nUARTRST,
+
+  input  wire        PSEL, PENABLE, PWRITE,
+  input  wire [11:2] PADDR,
+  input  wire [15:0] PWDATA,
+  output reg  [15:0] PRDATA,
+
+  input  wire        nUARTCTS, nUARTDCD, nUARTDSR, nUARTRI,
+  input  wire        UARTRXD, SIRIN,
+  input  wire        SCANENABLE, SCANINPCLK, SCANINUCLK,
+  input  wire        UARTTXDMACLR, UARTRXDMACLR,
+
+  output wire        UARTMSINTR, UARTRXINTR, UARTTXINTR, UARTRTINTR, UARTEINTR, UARTINTR,
+  output wire        UARTTXD, nSIROUT, nUARTOut2, nUARTOut1, nUARTRTS, nUARTDTR,
+  output wire        SCANOUTPCLK, SCANOUTUCLK,
+  output wire        UARTTXDMASREQ, UARTTXDMABREQ, UARTRXDMASREQ, UARTRXDMABREQ
+);
+
+  // -------- Address map (word offset [11:2]) ----------
+  localparam [9:0] A_UARTDR    = 10'h000; // 0x000
+  localparam [9:0] A_UARTRSR   = 10'h001; // 0x004
+  localparam [9:0] A_UARTFR    = 10'h006; // 0x018
+  localparam [9:0] A_UARTIBRD  = 10'h009; // 0x024
+  localparam [9:0] A_UARTFBRD  = 10'h00A; // 0x028
+  localparam [9:0] A_UARTLCR_H = 10'h00B; // 0x02C
+  localparam [9:0] A_UARTCR    = 10'h00C; // 0x030
+  localparam [9:0] A_UARTIFLS  = 10'h00D; // 0x034
+  localparam [9:0] A_UARTIMSC  = 10'h00E; // 0x038
+  localparam [9:0] A_UARTRIS   = 10'h00F; // 0x03C
+  localparam [9:0] A_UARTMIS   = 10'h010; // 0x040
+  localparam [9:0] A_UARTICR   = 10'h011; // 0x044
+  localparam [9:0] A_UARTDMACR = 10'h012; // 0x048
+
+  // --------------- Registers (simplified) --------------
+  reg [15:0] r_DR, r_RSR;   // DR + status
+  reg [15:0] r_FR;
+  reg [15:0] r_IBRD, r_FBRD, r_LCR_H, r_CR, r_IFLS, r_IMSC, r_DMACR;
+  reg [15:0] r_RIS, r_MIS;
+
+  // Reset (PRESETn or nUARTRST low)
+  always @(negedge PRESETn or negedge nUARTRST) begin
+    if (!PRESETn || !nUARTRST) begin
+      r_DR     <= 16'h0000;
+      r_RSR    <= 16'h0000;
+      r_FR     <= 16'b0000_1000_1100_1000; // TXFE=1,RXFE=1,BUSY=0 (đơn giản)
+      r_IBRD   <= 16'h0000;
+      r_FBRD   <= 16'h0000;
+      r_LCR_H  <= 16'h0000;
+      r_CR     <= 16'h0300; // bits 9:8 = 1 theo spec
+      r_IFLS   <= 16'h0012; // mid levels
+      r_IMSC   <= 16'h0000;
+      r_DMACR  <= 16'h0000;
+      r_RIS    <= 16'h0000;
+      r_MIS    <= 16'h0000;
+    end
+  end
+
+  // Write path (no wait)
+  wire wr_en = PSEL & PENABLE & PWRITE;
+  always @(posedge PCLK) begin
+    if (PRESETn) begin
+      if (wr_en) begin
+        case (PADDR)
+          A_UARTDR:    r_DR      <= {8'h00, PWDATA[7:0]};
+          A_UARTIBRD:  r_IBRD    <= PWDATA;
+          A_UARTFBRD:  r_FBRD    <= PWDATA;
+          A_UARTLCR_H: r_LCR_H   <= PWDATA;
+          A_UARTCR:    r_CR      <= PWDATA;
+          A_UARTIFLS:  r_IFLS    <= PWDATA;
+          A_UARTIMSC:  r_IMSC    <= PWDATA;
+          A_UARTICR: begin
+            // clear error bits 7..10 in RIS and RSR (mô phỏng nhẹ)
+            r_RIS[10:7] <= r_RIS[10:7] & ~PWDATA[10:7];
+            r_RSR[3:0]  <= r_RSR[3:0]  & ~PWDATA[3:0];
+          end
+          default: /* reserved -> ignore */;
+        endcase
+      end
+    end
+  end
+
+  // Read path
+  always @(*) begin
+    PRDATA = 16'h0000;
+    case (PADDR)
+      A_UARTDR   : PRDATA = r_DR;
+      A_UARTRSR  : PRDATA = r_RSR;
+      A_UARTFR   : PRDATA = r_FR;
+      A_UARTIBRD : PRDATA = r_IBRD;
+      A_UARTFBRD : PRDATA = r_FBRD;
+      A_UARTLCR_H: PRDATA = r_LCR_H;
+      A_UARTCR   : PRDATA = r_CR;
+      A_UARTIFLS : PRDATA = r_IFLS;
+      A_UARTRIS  : PRDATA = r_RIS;
+      A_UARTMIS  : PRDATA = r_MIS;
+      A_UARTDMACR: PRDATA = r_DMACR;
+      default    : PRDATA = 16'h0000;
+    endcase
+  end
+
+  // MIS = RIS & IMSC
+  always @(*) begin
+    r_MIS = r_RIS & r_IMSC;
+  end
+
+  // Interrupt outputs (gộp đơn giản)
+  assign UARTMSINTR = |r_MIS[3:0];
+  assign UARTRXINTR =  r_MIS[4];
+  assign UARTTXINTR =  r_MIS[5];
+  assign UARTRTINTR =  r_MIS[6];
+  assign UARTEINTR  = |r_MIS[10:7];
+  assign UARTINTR   = |r_MIS[10:0];
+
+  // Tie-offs (dummy)
+  assign UARTTXD=1'b1; assign nSIROUT=1'b1;
+  assign nUARTOut1=1'b1; assign nUARTOut2=1'b1;
+  assign nUARTRTS=1'b1;  assign nUARTDTR=1'b1;
+  assign SCANOUTPCLK=1'b0; assign SCANOUTUCLK=1'b0;
+  assign UARTTXDMASREQ=1'b0; assign UARTTXDMABREQ=1'b0;
+  assign UARTRXDMASREQ=1'b0; assign UARTRXDMABREQ=1'b0;
+
+endmodule
+
+`default_nettype wire
+
+
+
+
+
+
+
+
+
+
+
+
+`ifndef RUN_TEST_UART_BUS_V
+`define RUN_TEST_UART_BUS_V
+
+// ---------------- Address helpers ----------------
+localparam [11:2] OFF_UARTCR   = 10'h00C; // 0x030
+localparam [11:2] OFF_UARTFR   = 10'h006; // 0x018
+localparam [11:2] OFF_UARTDR   = 10'h000; // 0x000
+localparam [11:2] OFF_UARTECR  = 10'h001; // 0x004
+localparam [11:2] OFF_UARTIMSC = 10'h00E; // 0x038
+localparam [11:2] OFF_UARTRIS  = 10'h00F; // 0x03C
+
+// ---------------- Small check ----------------
+task check_equal;
+  input [8*32-1:0] tag;
+  input [15:0] act, exp;
+begin
+  if (act !== exp) begin
+    $display("[CHK][%0s] EXP=0x%04h ACT=0x%04h  -- FAIL", tag, exp, act);
+    $stop;
+  end else begin
+    $display("[CHK][%0s] OK 0x%04h", tag, act);
+  end
+end
+endtask
+
+// -------------------------------------------------
+// Test 1: Access Register (Write/Read)
+// -------------------------------------------------
+task tc_bus_access_write_read;
+  reg [15:0] r;
+begin
+  apb_write(OFF_UARTCR, 16'h0001);
+  apb_read (OFF_UARTCR, r);
+  check_equal("UARTCR R/W", r, 16'h0001);
+
+  apb_read (OFF_UARTFR, r);
+  $display("[INFO] UARTFR=0x%04h (RO sample)", r);
+end
+endtask
+
+// -------------------------------------------------
+// Test 2: Decode/Mapping sweep (samples)
+// -------------------------------------------------
+task tc_bus_decode_sweep;
+  reg [15:0] r;
+begin
+  apb_read(10'h020, r); // địa chỉ mẫu ngoài map dummy -> 0
+  $display("[INFO] PRDATA@0x%03h = 0x%04h (reserved->0 trong dummy)", 10'h020, r);
+end
+endtask
+
+// -------------------------------------------------
+// Test 3: Back-to-back transfers
+// -------------------------------------------------
+task tc_bus_back_to_back;
+  reg [15:0] r;
+begin
+  apb_write(OFF_UARTCR, 16'h0003);
+  apb_read (OFF_UARTFR, r);
+  apb_write(OFF_UARTDR, 16'h005A);
+  apb_read (OFF_UARTCR, r);
+  check_equal("Back2Back UARTCR", r, 16'h0003);
+end
+endtask
+
+// -------------------------------------------------
+// Test 4: Reset behavior
+// -------------------------------------------------
+task tc_bus_reset_behavior;
+  reg [15:0] r;
+begin
+  PRESETn = 1'b0;
+  repeat(2) @(posedge PCLK);
+  PRESETn = 1'b1;
+  repeat(2) @(posedge PCLK);
+
+  apb_read(OFF_UARTCR, r);
+  check_equal("Reset default UARTCR", r, 16'h0300);
+
+  apb_read(OFF_UARTFR, r);
+  $display("[INFO] After reset, UARTFR=0x%04h (expect TXFE/RXFE=1, BUSY=0 in dummy)", r);
+end
+endtask
+
+// -------------------------------------------------
+// Test 5: Side-effect / Error clear path (basic)
+// -------------------------------------------------
+task tc_bus_side_effect_error_path;
+  reg [15:0] r;
+begin
+  apb_write(OFF_UARTDR, 16'h00AA);        // ghi 1 byte giả lập
+  apb_write(OFF_UARTECR, 16'h000F);       // clear FE/PE/BE/OE (dummy không tạo lỗi thật)
+  apb_read (OFF_UARTRIS, r);
+  $display("[INFO] RIS after ECR clear (dummy) = 0x%04h", r);
+end
+endtask
+
+// -------------------------------------------------
+// Entry task run_test()  (bắt buộc theo yêu cầu)
+// -------------------------------------------------
+task run_test;
+begin
+  $display("\n===== RUN BUS TESTS =====\n");
+  tc_bus_access_write_read();
+  tc_bus_decode_sweep();
+  tc_bus_back_to_back();
+  tc_bus_reset_behavior();
+  tc_bus_side_effect_error_path();
+  $display("\n===== BUS TESTS DONE =====\n");
+end
+endtask
+
+`endif
+
+
+
+
+
+
+
+
+
+
+
+
+
+
